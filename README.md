@@ -1,20 +1,29 @@
-# mtj
+# cav/mtj
 
-A MTJ clojure wrapper.
+A MTJ [Matrix Toolkits Java](https://github.com/fommil/matrix-toolkits-java) clojure wrapper and core.matrix implementation.
+
+The goal is to implement as much core.matrix protocols as possible and, provide extra API for MTJ features that core.matrix does not have (yet).
 
 ## Installation
 
-```clojure
-[mtj "0.1.0"]
-```
+Not released to Clojars yet, because much implementation is still missing. It'll take some time before I can finish all necessary implementations.
 
 ## Example
 
-See unit tests.
+Just use it as a core.matrix implementation, like this:
+
+```clojure
+(require '[clojure.core.matrix :as m])
+
+(m/set-current-implementation :mtj)
+
+(m/matrix [1 2 3])
+...
+```
 
 ## API
 
-TBD
+Extra features API that core.matrix does not have will go here.
 
 ## License
 
