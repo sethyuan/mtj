@@ -5,13 +5,11 @@
   :dependencies [[org.clojure/clojure "1.6.0"]
                  [com.googlecode.matrix-toolkits-java/mtj "1.0.1"]
                  [com.github.fommil.netlib/all "1.1.2" :extension "pom"]
-                 [net.mikera/vectorz-clj "0.25.0"]
                  [net.mikera/core.matrix "0.29.1"]]
   :global-vars {*warn-on-reflection* true
                 *unchecked-math* true}
   :profiles {:aot {:aot :all}
-             :dev {:dependencies []}
-             }
+             :dev {:dependencies [[net.mikera/vectorz-clj "0.25.0"]]}}
   :jvm-opts ^:replace []
   :plugins [[codox "0.8.10"]]
   :codox {:language :clojure
