@@ -1,6 +1,6 @@
 # cav/mtj
 
-A MTJ [Matrix Toolkits Java](https://github.com/fommil/matrix-toolkits-java) clojure wrapper and core.matrix implementation.
+A [Matrix Toolkits Java](https://github.com/fommil/matrix-toolkits-java) clojure wrapper and core.matrix implementation.
 
 The goal is to implement as much core.matrix protocols as possible and, provide extra API for MTJ features that core.matrix does not have (yet).
 
