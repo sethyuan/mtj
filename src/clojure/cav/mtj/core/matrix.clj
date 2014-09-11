@@ -208,8 +208,8 @@
 
 (extend-protocol PSameShape
   Vector
-  (same-shape? [a ^Vector b]
-    (and (instance? Vector b) (= (.size a) (.size b))))
+  (same-shape? [a b]
+    (and (instance? Vector b) (= (.size a) (.size ^Vector b))))
 
   Matrix
   (same-shape? [a b]
