@@ -8,6 +8,8 @@
                  [net.mikera/core.matrix "0.29.1"]]
   :global-vars {*warn-on-reflection* true
                 *unchecked-math* true}
+  :source-paths ["src/clojure"]
+  :java-source-paths ["src/java"]
   :profiles {:aot {:aot :all}
              :dev {:dependencies [[net.mikera/vectorz-clj "0.25.0"]]}}
   :jvm-opts ^:replace []
