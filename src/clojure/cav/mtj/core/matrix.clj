@@ -780,12 +780,159 @@
         (error "column has a incompatible shape."))
       (error "column must be a 1D vector."))))
 
+(extend-protocol PElementCount
+  Vector
+  (element-count [m] (.size m))
+
+  Matrix
+  (element-count [m] (* (.numRows m) (.numColumns m))))
+
+(extend-protocol PFunctionalOperations
+  Vector
+  (element-seq [m] (map #(.get m %) (range (.size m))))
+  (element-map
+    ([m f] (element-map! (.copy m) f))
+    ([m f a] (element-map! (.copy m) f a))
+    ([m f a more] (element-map! (.copy m) f a more)))
+  (element-map!
+    ([m f]
+     (dotimes [i (.size m)]
+       (.set m i (double (f (.get m i)))))
+     m)
+    ([m f ^Vector a]
+     (dotimes [i (.size m)]
+       (.set m i (double (f (.get m i) (.get a i)))))
+     m)
+    ([m f a more]
+     (let [ms (cons m (cons a more))]
+       (dotimes [i (.size m)]
+         (.set m i (double (apply f (mapv #(.get ^Vector % i) ms)))))
+       m)))
+  (element-reduce
+    ([m f] (reduce f (element-seq m)))
+    ([m f init] (reduce f init (element-seq m))))
+
+  Matrix
+  (element-seq [m]
+    (for [i (range (.numRows m))
+          j (range (.numColumns m))]
+      (.get m i j)))
+  (element-map
+    ([m f] (element-map! (.copy m) f))
+    ([m f a] (element-map! (.copy m) f a))
+    ([m f a more] (element-map! (.copy m) f a more)))
+  (element-map!
+    ([m f]
+     (dotimes [i (.numRows m)]
+       (dotimes [j (.numColumns m)]
+         (.set m i j (double (f (.get m i j))))))
+     m)
+    ([m f ^Matrix a]
+     (dotimes [i (.numRows m)]
+       (dotimes [j (.numColumns m)]
+         (.set m i j (double (f (.get m i j) (.get a i j))))))
+     m)
+    ([m f a more]
+     (let [ms (cons m (cons a more))]
+     (dotimes [i (.numRows m)]
+       (dotimes [j (.numColumns m)]
+         (.set m i j (double (apply f (mapv #(.get ^Matrix % i j) ms))))))
+       m)))
+  (element-reduce
+    ([m f] (reduce f (element-seq m)))
+    ([m f init] (reduce f init (element-seq m)))))
+
+(extend-protocol PSelect
+  Vector
+  (select [m [index]]
+    (cond
+      (number? index) (.get m (int index))
+      (sequential? index) (Matrices/getSubVector m (int-array index))
+      (= index :all) m))
+
+  Matrix
+  (select [m [row col]]
+    (let [row-index (cond
+                      (number? row) (int-array [row])
+                      (sequential? row) (int-array row)
+                      (= row :all) (int-array (range (.numRows m))))
+          col-index (cond
+                      (number? col) (int-array [col])
+                      (sequential? col) (int-array col)
+                      (= col :all) (int-array (range (.numColumns m))))]
+      (Matrices/getSubMatrix m row-index col-index))))
+
+(extend-protocol PSetSelection
+  Vector
+  (set-selection [m args values]
+    (let [res (.copy m)]
+      (assign! (select res args) values)
+      res))
+
+  Matrix
+  (set-selection [m args values]
+    (let [res (.copy m)]
+      (assign! (select res args) values)
+      res)))
+
+(extend-protocol PIndicesAccess
+  Vector
+  (get-indices [m indices]
+    (let [size (count indices)
+          res (DenseVector. size)]
+      (loop [i 0, indices indices]
+        (when-let [idx (first indices)]
+          (if (sequential? idx)
+            (if (= (count idx) 1)
+              (.set res i (.get m (first idx)))
+              (error "Incompatible shape of index."))
+            (.set res i (.get m idx)))
+          (recur (inc i) (rest indices))))
+      res))
+
+  Matrix
+  (get-indices [m indices]
+    (let [size (count indices)
+          res (DenseVector. size)]
+      (loop [i 0, indices indices]
+        (when-let [[row col] (first indices)]
+          (.set res i (.get m row col))
+          (recur (inc i) (rest indices))))
+      res)))
+
+(extend-protocol PIndicesSetting
+  Vector
+  (set-indices [m indices values] (set-indices! (.copy m) indices values))
+  (set-indices! [m indices values]
+    (loop [indices indices, values values]
+      (when-let [idx (first indices)]
+        (if (sequential? idx)
+          (if (= (count idx) 1)
+            (.set m (int (first idx)) (double (first values)))
+            (error "Incompatible shape of index."))
+          (.set m (int idx) (double (first values))))
+        (recur (rest indices) (rest values))))
+    m)
+
+  Matrix
+  (set-indices [m indices values] (set-indices! (.copy m) indices values))
+  (set-indices! [m indices values]
+    (loop [indices indices, values values]
+      (when-let [[row col] (first indices)]
+        (.set m row col (first values))
+        (recur (rest indices) (rest values))))
+    m))
+
 (register-implementation imp)
 
 (comment
   
 (m/set-current-implementation :mtj)
-(m/div 2 (m/matrix :mtj [1 2 3]))
-(m/sqrt (m/matrix :mtj [[1 2] [3 4]]))
+(m/select-indices (m/matrix :vectorz [[1 2 3] [4 5 6] [7 8 9]]) [[0 1] [2 2] [1 2]])
+(m/select-indices (m/matrix :mtj [1 2 3 4 5 6]) [0 3])
+(m/select-indices (m/matrix :mtj [1 2 3 4 5 6]) [0 3])
+(m/set-indices! (m/matrix :mtj [1 2 3 4 5 6]) [[0] [3]] [100 200])
+(m/set-indices (m/matrix :mtj [[1 2 3] [4 5 6] [7 8 9]]) [[0 1] [2 2] [1 2]] [100 200 300])
+(m/select-indices (m/matrix :mtj [1 2 3 4 5 6]) [0 3])
 
   )
