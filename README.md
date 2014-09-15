@@ -2,11 +2,11 @@
 
 A [Matrix Toolkits Java](https://github.com/fommil/matrix-toolkits-java) clojure wrapper and [core.matrix](https://github.com/mikera/core.matrix) implementation.
 
-The goal is to implement as much core.matrix protocols as possible and, provide extra API for MTJ features that core.matrix does not have (yet).
+The goal is to implement as much core.matrix protocols as possible and, provide extra API for MTJ features that core.matrix does not offer (yet).
 
 ## Installation
 
-Not released to Clojars yet, because much implementation is still missing. It'll take some time before I can finish all necessary implementations.
+[![cav/mtj](http://clojars.org/cav/mtj/latest-version.svg)](http://clojars.org/cav/mtj)
 
 ## Example
 
@@ -24,6 +24,12 @@ Just use it as a core.matrix implementation, like this:
 ## API
 
 Extra features API that core.matrix does not have will go here.
+
+## Implemented core.matrix protocols
+
+Most protocols are implemented. Only a few infrequent ones are left unimplemented.
+
+*Norm* and *solve* are implemented, other linear algebra protocols are not implemented yet, but possible.
 
 ## License
 
