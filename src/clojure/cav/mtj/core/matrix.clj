@@ -1,6 +1,7 @@
 (ns cav.mtj.core.matrix
   "Wrapping MTJ for core.matrix."
   (:require [clojure.core.matrix :as m]
+            [clojure.core.matrix.linear :as l]
             [clojure.core.matrix.protocols :refer :all]
             [clojure.core.matrix.implementations :refer [register-implementation
                                                          get-canonical-object]]
@@ -923,16 +924,35 @@
         (recur (rest indices) (rest values))))
     m))
 
+(extend-protocol PNorm
+  Vector
+  (norm [m p]
+    (condp = p
+      1 (.norm m Vector$Norm/One)
+      2 (.norm m Vector$Norm/Two)
+      Double/POSITIVE_INFINITY (.norm m Vector$Norm/Infinity)
+      (error "p-norm not supported.")))
+
+  Matrix
+  (norm [m p]
+    (condp = p
+      1 (.norm m Matrix$Norm/One)
+      2 (.norm m Matrix$Norm/Frobenius)
+      Double/POSITIVE_INFINITY (.norm m Matrix$Norm/Infinity)
+      Long/MAX_VALUE (.norm m Matrix$Norm/Maxvalue)
+      (error "p-norm not supported."))))
+
+(extend-protocol PSolveLinear
+  Matrix
+  (solve [a b]
+    (cond
+      (instance? Vector b) (let [^Vector b b
+                                 res (.copy b)]
+                             (.solve a b res))
+      (instance? Matrix b) (let [^Matrix b b
+                                 res (.copy b)]
+                             (.solve a b res)
+                             res)
+      :else (error "Only MTJ vectors and matrices are supported."))))
+
 (register-implementation imp)
-
-(comment
-  
-(m/set-current-implementation :mtj)
-(m/select-indices (m/matrix :vectorz [[1 2 3] [4 5 6] [7 8 9]]) [[0 1] [2 2] [1 2]])
-(m/select-indices (m/matrix :mtj [1 2 3 4 5 6]) [0 3])
-(m/select-indices (m/matrix :mtj [1 2 3 4 5 6]) [0 3])
-(m/set-indices! (m/matrix :mtj [1 2 3 4 5 6]) [[0] [3]] [100 200])
-(m/set-indices (m/matrix :mtj [[1 2 3] [4 5 6] [7 8 9]]) [[0 1] [2 2] [1 2]] [100 200 300])
-(m/select-indices (m/matrix :mtj [1 2 3 4 5 6]) [0 3])
-
-  )
