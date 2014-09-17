@@ -1,689 +1,730 @@
 (ns cav.mtj.core.matrix
   "Wrapping MTJ for core.matrix."
-  (:require [clojure.core.matrix :as m]
-            [clojure.core.matrix.linear :as l]
-            [clojure.core.matrix.protocols :refer :all]
-            [clojure.core.matrix.implementations :refer [register-implementation
-                                                         get-canonical-object]]
-            [clojure.core.matrix.utils :refer [error]])
+  (:use [clojure.core.matrix.protocols])
+  (:require [clojure.core.matrix]
+            [clojure.core.matrix.implementations :as impl]
+            [clojure.core.matrix.utils :refer [error same-shape-object?]])
   (:import [no.uib.cipr.matrix
-            Matrix Vector DenseVector DenseMatrix Matrices
+            DenseVector DenseMatrix Matrices
             Vector$Norm Matrix$Norm
-            BandMatrix LowerSymmBandMatrix
+            LowerSymmBandMatrix
             PermutationMatrix]
-           [cav.mtj RowVectorView ColumnVectorView]))
+           [cav.mtj Mat Vec RowVectorView ColumnVectorView]))
 
-(def imp
-  (reify
-    PImplementation
-    (implementation-key [m] :mtj)
-    (meta-info [m] {:doc "MTJ as an implementation of core.matrix."})
-    (supports-dimensionality? [m dimensions]
-      (or (= dimensions 1) (= dimensions 2)))
-    (new-vector [m length] (DenseVector. (int length)))
-    (new-matrix [m rows columns] (DenseMatrix. (int rows) (int columns)))
-    (new-matrix-nd [m shape]
-      (case (count shape)
-        1 (new-vector m (first shape))
-        2 (new-matrix m (first shape) (second shape))
-        nil))
-    (construct-matrix [m data]
-      (cond
-        (number? data) (double data)
-        (instance? Vector data) data
-        (instance? Matrix data) data   
-        (instance? (Class/forName "[D") data) (DenseVector. ^doubles data)
-        (instance? (Class/forName "[[D") data) (DenseMatrix. ^"[[D" data)
-        (is-vector? data)
-          (let [^long size (dimension-count data 0)
-                res (DenseVector. size)]
-            (dotimes [i size]
-              (.set res i (double (get-1d data i))))
-            res)
-        (sequential? data)
-          (let [mat (DenseMatrix. (count data) (count (first data)))]
-            (loop [i 0, rows data]
-              (when-let [row (first rows)]
-                (loop [j 0, vs row]
-                  (when-let [v (first vs)]
-                    (.set mat i j (double v))
-                    (recur (inc j) (rest vs))))
-                (recur (inc i) (rest rows))))
-            mat)))
+(definline ^:private array? [a] `(not (is-scalar? ~a)))
 
-    PRowColMatrix
-    (column-matrix [m data]
-      (cond
-        (instance? Vector data) (DenseMatrix. ^Vector data)
-        (is-vector? data)
-          (let [^long size (dimension-count data 0)
-                mat (DenseMatrix. size 1)]
-            (dotimes [i size]
-              (.set mat i 0 (get-1d data i)))
-            mat)
-        :else (error "data has to be a 1D vector.")))
-    (row-matrix [m data]
-      (if (is-vector? data)
-        (let [^long size (dimension-count data 0)
-              mat (DenseMatrix. 1 size)]
-          (dotimes [i size]
-            (.set mat 0 i (get-1d data i)))
-          mat)
-        (error "data has to be a 1D vector.")))
+(definline ^:private zero-dim? [a] `(= (dimensionality ~a) 0))
 
-    PComputeMatrix
-    (compute-matrix [m shape f]
-      (case (count shape)
-        1 (let [res (DenseVector. (int (first shape)))]
-            (dotimes [i (first shape)]
-              (.set res i (double (f i))))
-            res)
-        2 (let [res (DenseMatrix. (int (first shape)) (int (second shape)))]
-            (dotimes [i (first shape)]
-              (dotimes [j (second shape)]
-                (.set res i j (double (f i j)))))
-            res)
-        (error "Shape not supported.")))
+(def ^:private mtj-impl (Mat. (DenseMatrix. 1 1)))
 
-    PSparse
-    (sparse-coerce [m data] nil)
+(extend-type Mat
+  PImplementation
+  (implementation-key [a] :mtj)
+  (meta-info [a] {:doc "MTJ as an implementation of core.matrix."})
+  (supports-dimensionality? [a dimensions] (<= 1 dimensions 2))
+  (new-vector [a length] (Vec. (DenseVector. (int length))))
+  (new-matrix [a rows columns] (Mat. (DenseMatrix. (int rows) (int columns))))
+  (new-matrix-nd [a shape]
+    (case (count shape)
+      1 (new-vector a (first shape))
+      2 (new-matrix a (first shape) (second shape))
+      nil))
+  (construct-matrix [a data]
+    (cond
+      (zero-dim? data) (get-0d data)
+      (instance? Vec data) data
+      (instance? Mat data) data   
+      (instance? (Class/forName "[D") data) (Vec. (DenseVector. ^doubles data))
+      (instance? (Class/forName "[[D") data) (Mat. (DenseMatrix. ^"[[D" data))
+      (is-vector? data) (let [^int size (dimension-count data 0)
+                              res (DenseVector. size)]
+                          (dotimes [i size]
+                            (.set res i (double (get-1d data i))))
+                          (Vec. res))
+      (array? data) (if (= (dimensionality data) 2)
+                      (let [^int row-size (dimension-count data 0)
+                            ^int col-size (dimension-count data 1)
+                            res (DenseMatrix. row-size col-size)]
+                        (dotimes [i row-size]
+                          (dotimes [j col-size]
+                            (.set res i j (get-2d data i j))))
+                        (Mat. res))
+                      (error "Incompatible shape."))))
 
-    PDense
-    (dense-coerce [m data] data)
-
-    PSpecialisedConstructors
-    (identity-matrix [m dims] (Matrices/identity (int dims)))
-    (diagonal-matrix [m diagonal-values]
-      (let [^long size (dimension-count diagonal-values 0)
-            mat (LowerSymmBandMatrix. size 0)]
+  PRowColMatrix
+  (column-matrix [a data]
+    (cond
+      (instance? Vec data) (Mat. (DenseMatrix. (.mtj ^Vec data)))
+      (is-vector? data) (let [^int size (dimension-count data 0)
+                              res (DenseMatrix. size 1)]
+                          (dotimes [i size]
+                            (.set res i 0 (get-1d data i)))
+                          (Mat. res))
+      :else (error "data has to be a 1D vector.")))
+  (row-matrix [a data]
+    (if (is-vector? data)
+      (let [^int size (dimension-count data 0)
+            res (DenseMatrix. 1 size)]
         (dotimes [i size]
-          (.set mat i i (get-1d diagonal-values i)))
-        mat))
+          (.set res 0 i (get-1d data i)))
+        (Mat. res))
+      (error "data has to be a 1D vector.")))
 
-    PPermutationMatrix
-    (permutation-matrix [m permutation]
-      (PermutationMatrix. (int-array permutation)))))
+  PComputeMatrix
+  (compute-matrix [a shape f]
+    (case (count shape)
+      1 (let [res (DenseVector. (int (first shape)))]
+          (dotimes [i (first shape)]
+            (.set res i (double (f i))))
+          (Vec. res))
+      2 (let [res (DenseMatrix. (int (first shape)) (int (second shape)))]
+          (dotimes [i (first shape)]
+            (dotimes [j (second shape)]
+              (.set res i j (double (f i j)))))
+          (Mat. res))
+      (error "Incompatible shape.")))
+
+  PSparse
+  (sparse-coerce [a data] nil)
+
+  PDense
+  (dense-coerce [a data] data)
+
+  PCoercion
+  (coerce-param [a param]
+    (cond
+      (instance? Vec param) param
+      (instance? Mat param) param
+      (is-vector? param)
+        (do
+          (println "WARNING: You are coercing a non-MTJ object, this hurts performance!")
+          (construct-matrix a param))
+      (array? param)
+        (do
+          (println "WARNING: You are coercing a non-MTJ object, this hurts performance!")
+          (construct-matrix a param))
+      :else nil))
+
+  PSpecialisedConstructors
+  (identity-matrix [a dims] (Mat. (Matrices/identity (int dims))))
+  (diagonal-matrix [a diagonal-values]
+    (let [^int size (dimension-count diagonal-values 0)
+          mat (LowerSymmBandMatrix. size 0)]
+      (dotimes [i size]
+        (.set mat i i (get-1d diagonal-values i)))
+      (Mat. mat)))
+
+  PPermutationMatrix
+  (permutation-matrix [a permutation]
+    (Mat. (PermutationMatrix. (int-array permutation)))))
 
 (extend-protocol PDimensionInfo
-  Vector
-  (dimensionality [v] 1)
-  (get-shape [v] [(.size v)])
-  (is-scalar? [v] false)
-  (is-vector? [v] true)
-  (dimension-count [v ^long dimension-number]
+  Vec
+  (dimensionality [a] 1)
+  (get-shape [a] [(.size a)])
+  (is-scalar? [a] false)
+  (is-vector? [a] true)
+  (dimension-count [a ^long dimension-number]
     (case dimension-number 
-      0 (.size v)
+      0 (.size a)
       (error "Illegal dimension number.")))
 
-  Matrix
-  (dimensionality [m] 2)
-  (get-shape [m] [(.numRows m) (.numColumns m)])
-  (is-scalar? [m] false)
-  (is-vector? [m] false)
-  (dimension-count [m ^long dimension-number]
+  Mat
+  (dimensionality [a] 2)
+  (get-shape [a] [(.numRows a) (.numColumns a)])
+  (is-scalar? [a] false)
+  (is-vector? [a] false)
+  (dimension-count [a ^long dimension-number]
     (case dimension-number 
-      0 (.numRows m)
-      1 (.numColumns m)
+      0 (.numRows a)
+      1 (.numColumns a)
       (error "Illegal dimension number."))))
 
 (extend-protocol PIndexedAccess
-  Vector
-  (get-1d [m row] (.get m (int row)))
-  (get-2d [m row column] (error "1D vector must be accessed by only 1 index."))
-  (get-nd [m indexes]
+  Vec
+  (get-1d [a row] (.get a (int row)))
+  (get-2d [a row column] (error "1D vector must be accessed by only 1 index."))
+  (get-nd [a indexes]
     (if (= 1 (count indexes))
-      (get-1d m (first indexes))
+      (get-1d a (first indexes))
       (error "1D vector must be accessed by only 1 index.")))
 
-  Matrix
-  (get-1d [m row] (error "2D matrix must be accessed by row and column."))
-  (get-2d [m row column] (.get m (int row) (int column)))
-  (get-nd [m indexes]
+  Mat
+  (get-1d [a row] (error "2D matrix must be accessed by row and column."))
+  (get-2d [a row column] (.get a (int row) (int column)))
+  (get-nd [a indexes]
     (if (= 2 (count indexes))
-      (get-2d m (first indexes) (second indexes))
+      (get-2d a (first indexes) (second indexes))
       (error "2D matrix must be accessed by row and column."))))
 
 (extend-protocol PIndexedSetting
-  Vector
-  (set-1d [m row v] (set-1d! (.copy m) row v))
-  (set-2d [m row column v] (error "1D vector must be set with only 1 index."))
-  (set-nd [m indexes v]
+  Vec
+  (set-1d [a row v] (set-1d! (.copy a) row v))
+  (set-2d [a row column v] (error "1D vector must be set with only 1 index."))
+  (set-nd [a indexes v]
     (if (= 1 (count indexes))
-      (set-1d! (.copy m) (first indexes) v)
+      (set-1d! (.copy a) (first indexes) v)
       (error "1D vector must be set with only 1 index.")))
-  (is-mutable? [m] true)
+  (is-mutable? [a] true)
 
-  Matrix
-  (set-1d [m row v] (error "2D matrix must be set with 2 indexes."))
-  (set-2d [m row column v] (set-2d! (.copy m) row column v))
-  (set-nd [m indexes v]
+  Mat
+  (set-1d [a row v] (error "2D matrix must be set with 2 indexes."))
+  (set-2d [a row column v] (set-2d! (.copy a) row column v))
+  (set-nd [a indexes v]
     (if (= 2 (count indexes))
-      (set-2d! (.copy m) (first indexes) (second indexes) v)
+      (set-2d! (.copy a) (first indexes) (second indexes) v)
       (error "2D matrix must be set with 2 indexes.")))
-  (is-mutable? [m] true))
+  (is-mutable? [a] true))
 
 (extend-protocol PIndexedSettingMutable
-  Vector
-  (set-1d! [m ^long row ^double v] (.set m row v))
-  (set-2d! [m row column v] (error "1D vector must be set with only 1 index."))
-  (set-nd! [m indexes v]
+  Vec
+  (set-1d! [a ^long row ^double v]
+    (do
+      (.set a row v)
+      a))
+  (set-2d! [a row column v] (error "1D vector must be set with only 1 index."))
+  (set-nd! [a indexes v]
     (if (= 1 (count indexes))
-      (set-1d! m (first indexes) v)
+      (set-1d! a (first indexes) v)
       (error "1D vector must be set with only 1 index.")))
 
-  Matrix
-  (set-1d! [m row v] (error "2D matrix must be set with 2 indexes."))
-  (set-2d! [m ^long row ^long column ^double v] (.set m row column v))
-  (set-nd! [m indexes v]
+  Mat
+  (set-1d! [a row v] (error "2D matrix must be set with 2 indexes."))
+  (set-2d! [a ^long row ^long column ^double v]
+    (do
+      (.set a row column v)
+      a))
+  (set-nd! [a indexes v]
     (if (= 2 (count indexes))
-      (set-2d! m (first indexes) (second indexes) v)
+      (set-2d! a (first indexes) (second indexes) v)
       (error "2D matrix must be set with 2 indexes."))))
 
 (extend-protocol PMatrixCloning
-  Vector
-  (clone [m] (.copy m))
-  
-  Matrix
-  (clone [m] (.copy m)))
+  Vec
+  (clone [a] (.copy a))
+
+  Mat
+  (clone [a] (.copy a)))
 
 (extend-protocol PTypeInfo
-  Vector
-  (element-type [m] Double/TYPE)
+  Vec
+  (element-type [a] Double/TYPE)
 
-  Matrix
-  (element-type [m] Double/TYPE))
+  Mat
+  (element-type [a] Double/TYPE))
+
+(extend-protocol PSparse
+  Vec
+  (sparse [a] a)
+
+  Mat
+  (sparse [a] a))
+
+(extend-protocol PDense
+  Vec
+  (dense [a] a)
+
+  Mat
+  (dense [a] a))
 
 (extend-protocol PArrayMetrics
-  Vector
-  (nonzero-count [m] (Matrices/cardinality m))
+  Vec
+  (nonzero-count [a] (Matrices/cardinality (.mtj a)))
 
-  Matrix
-  (nonzero-count [m] (Matrices/cardinality m)))
+  Mat
+  (nonzero-count [a] (Matrices/cardinality (.mtj a))))
 
 (extend-protocol PMutableMatrixConstruction
-  Vector
-  (mutable-matrix [m] (.copy m))
+  Vec
+  (mutable-matrix [a] (.copy a))
 
-  Matrix
-  (mutable-matrix [m] (.copy m)))
+  Mat
+  (mutable-matrix [a] (.copy a)))
 
 (extend-protocol PSameShape
-  Vector
+  Vec
   (same-shape? [a b]
-    (and (instance? Vector b) (= (.size a) (.size ^Vector b))))
+    (cond
+      (instance? Vec b) (= (.size a) (.size ^Vec b))
+      :else (same-shape-object? (get-shape a) (get-shape b))))
 
-  Matrix
+  Mat
   (same-shape? [a b]
-    (and (instance? Matrix b)
-         (let [b ^Matrix b]
-           (and (= (.numRows a) (.numRows b))
-                (= (.numColumns a) (.numColumns b)))))))
+    (cond
+      (instance? Mat b) (let [^Mat b b]
+                             (and (= (.numRows a) (.numRows b))
+                                  (= (.numColumns a) (.numColumns b))))
+      :else (same-shape-object? (get-shape a) (get-shape b)))))
 
 (extend-protocol PValidateShape
-  Vector
-  (validate-shape [m] (get-shape m))
+  Vec
+  (validate-shape [a] (get-shape a))
 
-  Matrix
-  (validate-shape [m] (get-shape m)))
+  Mat
+  (validate-shape [a] (get-shape a)))
 
 (extend-protocol PMatrixSlices
-  Vector
-  (get-row [m i] (error "Cannot access row of 1D vector."))
-  (get-column [m i] (error "Cannot access column of 1D vector."))
-  (get-major-slice [m ^long i] (.get m i))
-  (get-slice [m dimension ^long i]
+  Vec
+  (get-row [a i] (error "Cannot access row of 1D vector."))
+  (get-column [a i] (error "Cannot access column of 1D vector."))
+  (get-major-slice [a ^long i] (.get a i))
+  (get-slice [a dimension ^long i]
     (if (= dimension 0)
-      (.get m i)
+      (.get a i)
       (error "Only dimension 0 is supported for 1D vector.")))
 
-  Matrix
-  (get-row [m i] (RowVectorView. m i))
-  (get-column [m i] (ColumnVectorView. m i))
-  (get-major-slice [m i] (get-row m i))
-  (get-slice [m ^long dimension i]
+  Mat
+  (get-row [a i] (Vec. (RowVectorView. (.mtj a) i)))
+  (get-column [a i] (Vec. (ColumnVectorView. (.mtj a) i)))
+  (get-major-slice [a i] (get-row a i))
+  (get-slice [a ^long dimension i]
     (case dimension
-      0 (get-row m i)
-      1 (get-column m i)
+      0 (get-row a i)
+      1 (get-column a i)
       (error "Only dimensions 0 and 1 are supported for a 2D matrix."))))
 
 (extend-protocol PSliceJoin
-  Vector
-  (join [m ^Vector a]
-    (let [m-size (.size m)
-          a-size (.size a)
+  Vec
+  (join [a x]
+    (let [m-size (.size a)
+          ^int a-size (dimension-count x 0)
           res (DenseVector. (+ m-size a-size))]
-      (dotimes [i m-size] (.set res i (.get m i)))
-      (dotimes [i a-size] (.set res (+ i m-size) (.get a i)))
-      res))
+      (dotimes [i m-size] (.set res i (.get a i)))
+      (dotimes [i a-size] (.set res (+ i m-size) (double (get-1d x i))))
+      (Vec. res)))
 
-  Matrix
-  (join [m ^Matrix a]
-    (let [m-col-size (.numColumns m)
-          a-col-size (.numColumns a)]
+  Mat
+  (join [a x]
+    (let [m-col-size (.numColumns a)
+          ^int a-col-size (dimension-count x 1)]
       (if (= m-col-size a-col-size)
-        (let [m-row-size (.numRows m)
-              a-row-size (.numRows a)
+        (let [m-row-size (.numRows a)
+              ^int a-row-size (dimension-count x 0)
               res (DenseMatrix. (+ m-row-size a-row-size) m-col-size)]
           (dotimes [i m-row-size]
             (dotimes [j m-col-size]
-              (.set res i j (.get m i j))))
+              (.set res i j (.get a i j))))
           (dotimes [i a-row-size]
             (dotimes [j a-col-size]
-              (.set res (+ i m-row-size) j (.get a i j))))
-          res)
+              (.set res (+ i m-row-size) j (double (get-2d x i j)))))
+          (Mat. res))
         (error "Column size not compatible.")))))
 
 (extend-protocol PSliceJoinAlong
-  Vector
-  (join-along [m a dim]
+  Vec
+  (join-along [a x dim]
     (if (= dim 0)
-      (join m a)
+      (join a x)
       (error "1D vector can only be joined on dimension 0.")))
 
-  Matrix
-  (join-along [m ^Matrix a ^long dim]
+  Mat
+  (join-along [a x ^long dim]
     (case dim 
-      0 (join m a)
-      1 (let [m-row-size (.numRows m)
-              a-row-size (.numRows a)]
+      0 (join a x)
+      1 (let [m-row-size (.numRows a)
+              ^int a-row-size (dimension-count x 0)]
           (if (= m-row-size a-row-size)
-            (let [m-col-size (.numColumns m)
-                  a-col-size (.numColumns a)
+            (let [m-col-size (.numColumns a)
+                  ^int a-col-size (dimension-count x 1)
                   res (DenseMatrix. m-row-size (+ m-col-size a-col-size))]
               (dotimes [j m-col-size]
                 (dotimes [i m-row-size]
-                  (.set res i j (.get m i j))))
+                  (.set res i j (.get a i j))))
               (dotimes [j a-col-size]
                 (dotimes [i a-row-size]
-                  (.set res i (+ j m-col-size) (.get a i j))))
-              res)
+                  (.set res i (+ j m-col-size) (double (get-2d x i j)))))
+              (Mat. res))
             (error "Row size is not compatible.")))
       (error "2D matrix can only be joined on dimensions 0 and 1."))))
 
 (extend-protocol PSubVector
-  Vector
-  (subvector [m start length]
-    (Matrices/getSubVector m (int-array (range start (+ start length))))))
+  Vec
+  (subvector [a start length]
+    (Vec. (Matrices/getSubVector (.mtj a) (int-array (range start (+ start length)))))))
 
 (extend-protocol PMatrixSubComponents
-  Matrix
-  (main-diagonal [m]
-    (let [col-size (.numColumns m)
-          res (DenseVector. col-size)]
-      (dotimes [i col-size]
-        (.set res i (.get m i i)))
-      res)))
+  Mat
+  (main-diagonal [a]
+    (let [size (min (.numRows a) (.numColumns a))
+          res (DenseVector. size)]
+      (dotimes [i size]
+        (.set res i (.get a i i)))
+      (Vec. res))))
 
 (extend-protocol PZeroCount
-  Vector
-  (zero-count [m]
-    (- (.size m) (nonzero-count m)))
+  Vec
+  (zero-count [a]
+    (- (.size a) (nonzero-count a)))
 
-  Matrix
-  (zero-count [m]
-    (- (* (.numRows m) (.numColumns m)) (nonzero-count m))))
+  Mat
+  (zero-count [a]
+    (- (* (.numRows a) (.numColumns a)) (nonzero-count a))))
 
 (extend-protocol PAssignment
-  Vector
-  (assign! [m source]
+  Vec
+  (assign! [a source]
     (cond
-      (number? source) (fill! m source)
-      (same-shape? m source) (do
-                               (dotimes [i (.size m)]
-                                 (.set m i (.get ^Vector source i)))
-                               m) 
+      (zero-dim? source) (fill! a (get-0d source))
+      (same-shape? a source) (do
+                               (dotimes [i (.size a)]
+                                 (.set a i (double (get-1d source i))))
+                               a) 
       :else (error "Incompatible shape.")))
+  (assign-array! [a arr] (assign! a arr))
 
-  Matrix
-  (assign! [m source]
+  Mat
+  (assign! [a source]
     (cond
-      (number? source) (fill! m source)
+      (zero-dim? source) (fill! a (get-0d source))
       (and (is-vector? source)
-           (= (dimension-count source 0) (dimension-count m 1)))
+           (= (dimension-count source 0) (dimension-count a 1)))
         (do
-          (dotimes [i (.numRows m)]
-            (set-row! m i source))
-          m)
-      (same-shape? m source) (do
-                               (dotimes [i (.numRows m)]
-                                 (dotimes [j (.numColumns m)]
-                                   (.set m i j (.get ^Matrix source i j))))
-                               m)
-      :else (error "source has to have dimensionality 0 or 1 for a 2D matrix."))))
+          (dotimes [i (.numRows a)]
+            (set-row! a i source))
+          a)
+      (same-shape? a source) (do
+                               (dotimes [i (.numRows a)]
+                                 (dotimes [j (.numColumns a)]
+                                   (.set a i j (double (get-2d source i j)))))
+                               a)
+      :else (error "source has to have dimensionality 0 or 1 for a 2D matrix.")))
+  (assign-array! [a arr]
+    (let [col-size (.numColumns a)]
+      (dotimes [i (.numRows a)]
+        (dotimes [j col-size]
+          (.set a i j (get-1d arr (+ (* i col-size) j)))))
+      a)))
 
 (extend-protocol PImmutableAssignment
-  Vector
-  (assign [m source] (assign! (.copy m) source))
+  Vec
+  (assign [a source] (assign! (.copy a) source))
 
-  Matrix
-  (assign [m source] (assign! (.copy m) source)))
+  Mat
+  (assign [a source] (assign! (.copy a) source)))
 
 (extend-protocol PMutableFill
-  Vector
-  (fill! [m ^double value]
-    (dotimes [i (.size m)]
-      (.set m i value))
-    m)
+  Vec
+  (fill! [a ^double value]
+    (dotimes [i (.size a)]
+      (.set a i value))
+    a)
 
-  Matrix
-  (fill! [m ^double value]
-    (dotimes [i (.numRows m)]
-      (dotimes [j (.numColumns m)]
-        (.set m i j value)))
-    m))
+  Mat
+  (fill! [a ^double value]
+    (dotimes [i (.numRows a)]
+      (dotimes [j (.numColumns a)]
+        (.set a i j value)))
+    a))
 
 (extend-protocol PDoubleArrayOutput
-  Vector
-  (to-double-array [m] (Matrices/getArray m))
-  (as-double-array [m] nil)
+  Vec
+  (to-double-array [a] (Matrices/getArray (.mtj a)))
+  (as-double-array [a] nil)
 
-  Matrix
-  (to-double-array [m] (Matrices/getArray m))
-  (as-double-array [m] nil))
+  Mat
+  (to-double-array [a]
+    (let [row-size (.numRows a)
+          col-size (.numColumns a)
+          res (double-array (* row-size col-size))]
+      (dotimes [i row-size]
+        (dotimes [j col-size]
+          (aset res (+ (* i col-size) j) (.get a i j))))
+      res))
+  (as-double-array [a] nil))
 
 (extend-protocol PObjectArrayOutput
-  Vector
-  (to-object-array [m] (Matrices/getArray m))
-  (as-object-array [m] nil)
+  Vec
+  (to-object-array [a] (Matrices/getArray (.mtj a)))
+  (as-object-array [a] nil)
 
-  Matrix
-  (to-object-array [m] (Matrices/getArray m))
-  (as-object-array [m] nil))
+  Mat
+  (to-object-array [a] (to-double-array a))
+  (as-object-array [a] nil))
 
 (extend-protocol PMatrixMultiply
-  Vector
-  (matrix-multiply [m a]
+  Vec
+  (matrix-multiply [a x]
     (cond
-      (number? a) (element-multiply m a)
-      (instance? Vector a) (.dot m ^Vector a)
-      (instance? Matrix a)
-        (let [^Matrix a a
-              len (.size m)
-              res-size (.numColumns a) 
+      (zero-dim? x) (element-multiply! (.copy a) (get-0d x))
+      (instance? Vec x) (.dot a ^Vec x)
+      (instance? Mat x)
+        (let [^Mat x x
+              len (.size a)
+              res-size (.numColumns x) 
               row-matrix (DenseMatrix. 1 len)
               res-matrix (DenseMatrix. 1 res-size)
               res (DenseVector. res-size)]
           (dotimes [i len]
-            (.set row-matrix 0 i (.get m i)))
-          (.mult row-matrix a res-matrix)
+            (.set row-matrix 0 i (.get a i)))
+          (.mult row-matrix (.mtj x) res-matrix)
           (dotimes [i res-size]
             (.set res i (.get res-matrix 0 i)))
-          res)
+          (Vec. res))
+      (is-vector? x) (matrix-multiply a (coerce-param mtj-impl x))
+      (array? x) (matrix-multiply a (coerce-param mtj-impl x))
       :else (error "Can only multiply scalar, vector and matrix.")))
-  (element-multiply [m a] (element-multiply! (.copy m) a))
+  (element-multiply [a x] (element-multiply! (.copy a) x))
 
-  Matrix
-  (matrix-multiply [m a]
+  Mat
+  (matrix-multiply [a x]
     (cond
-      (number? a) (element-multiply m a)
-      (instance? Vector a) (.mult m ^Vector a (DenseVector. (.numRows m)))
-      (instance? Matrix a)
-        (let [^Matrix a a]
-          (.mult m a (DenseMatrix. (.numRows m) (.numColumns a))))
+      (zero-dim? x) (element-multiply! (.copy a) (get-0d x))
+      (instance? Vec x) (.mult a ^Vec x (Vec. (DenseVector. (.numRows a))))
+      (instance? Mat x)
+        (let [^Mat x x]
+          (.mult a x (Mat. (DenseMatrix. (.numRows a) (.numColumns x)))))
+      (is-vector? x) (matrix-multiply a (coerce-param mtj-impl x))
+      (array? x) (matrix-multiply a (coerce-param mtj-impl x))
       :else (error "Can only multiply scalar, vector and matrix.")))
-  (element-multiply [m a] (element-multiply! (.copy m) a)))
+  (element-multiply [a x] (element-multiply! (.copy a) x)))
 
 (extend-protocol PMatrixMultiplyMutable
-  Vector
-  (element-multiply! [m a]
+  Vec
+  (element-multiply! [a x]
     (cond
-      (number? a) (.scale m (double a))
-      (instance? Vector a)
-        (let [^Vector a a
-              size (.size m)]
-          (if (= (.size a) size)
+      (zero-dim? x) (.scale a (double (get-0d x)))
+      (instance? Vec x)
+        (let [^Vec x x
+              size (.size a)]
+          (if (= (.size x) size)
             (do
               (dotimes [i size]
-                (.set m i (* (.get m i) (.get a i))))
-              m)
-            (error "shape of a is not compatible.")))
-      :else (error "shape of a is not compatible.")))
+                (.set a i (* (.get a i) (.get x i))))
+              a)
+            (error "shape of x is not compatible.")))
+      (is-vector? x)
+        (let [size (.size a)]
+          (if (= (dimension-count x 0) size)
+            (do
+              (dotimes [i size]
+                (.set a i (* (.get a i) (get-1d x i))))
+              a)
+            (error "shape of x is not compatible.")))
+      :else (error "shape of x is not compatible.")))
 
-  Matrix
-  (element-multiply! [m a]
+  Mat
+  (element-multiply! [a x]
     (cond
-      (number? a) (.scale m (double a))
-      (instance? Vector a)
-        (let [^Vector a a
-              row-size (.numRows m)
-              col-size (.numColumns m)]
-          (if (= (.size a) col-size)
+      (zero-dim? x) (.scale a (double (get-0d x)))
+      (instance? Vec x)
+        (let [^Vec x x
+              row-size (.numRows a)
+              col-size (.numColumns a)]
+          (if (= (.size x) col-size)
             (do
               (dotimes [i row-size]
                 (dotimes [j col-size]
-                  (.set m i j (* (.get m i j) (.get a j)))))
-              m)
-            (error "shape of a is not compatible.")))
-      (instance? Matrix a)
-        (let [^Matrix a a
-              row-size (.numRows m)
-              col-size (.numColumns m)]
-          (if (and (= (.numRows a) row-size) (= (.numColumns a) col-size))
+                  (.set a i j (* (.get a i j) (.get x j)))))
+              a)
+            (error "shape of x is not compatible.")))
+      (instance? Mat x)
+        (let [^Mat x x
+              row-size (.numRows a)
+              col-size (.numColumns a)]
+          (if (and (= (.numRows x) row-size) (= (.numColumns x) col-size))
             (do
               (dotimes [i row-size]
                 (dotimes [j col-size]
-                  (.set m i j (* (.get m i j) (.get a i j)))))
-              m)
-            (error "shape of a is not compatible.")))
-      :else (error "shape of a is not compatible."))))
+                  (.set a i j (* (.get a i j) (.get x i j)))))
+              a)
+            (error "shape of x is not compatible.")))
+      (is-vector? x)
+        (let [row-size (.numRows a)
+              col-size (.numColumns a)]
+          (if (= (dimension-count x 0) col-size)
+            (do
+              (dotimes [i row-size]
+                (dotimes [j col-size]
+                  (.set a i j (* (.get a i j) (get-1d x j)))))
+              a)
+            (error "shape of x is not compatible.")))
+      (array? x)
+        (let [row-size (.numRows a)
+              col-size (.numColumns a)]
+          (if (and (= (dimension-count x 0) row-size)
+                   (= (dimension-count x 1) col-size))
+            (do
+              (dotimes [i row-size]
+                (dotimes [j col-size]
+                  (.set a i j (* (.get a i j) (get-2d x i j)))))
+              a)
+            (error "shape of x is not compatible.")))
+      :else (error "shape of x is not compatible."))))
 
 (extend-protocol PMatrixProducts
-  Vector
-  (inner-product [m ^Vector a] (.dot m a))
-  (outer-product [m ^Vector a]
-    (let [c (column-matrix imp m)
-          r (row-matrix imp a)]
+  Vec
+  (inner-product [a x]
+    (cond
+      (instance? Vec x) (.dot a ^Vec x)
+      (is-vector? x)
+        (do
+          (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
+          (matrix-multiply a x))
+      :else (error "Need vectors for inner product.")))
+  (outer-product [a x]
+    (let [c (column-matrix mtj-impl a)
+          r (row-matrix mtj-impl x)]
       (matrix-multiply c r))))
 
-(extend-protocol PValueEquality
-  Vector
-  (value-equals [m a] (matrix-equals m a))
-  
-  Matrix
-  (value-equals [m a] (matrix-equals m a)))
-
-(extend-protocol PMatrixEquality
-  Vector
-  (matrix-equals [a ^Vector b]
-    (let [size (.size a)]
-      (if (= size (.size b))
-        (loop [i 0]
-          (if (< i size)
-            (if (= (.get a i) (.get b i))
-              (recur (inc i))
-              false)
-            true))
-        false)))
-
-  Matrix
-  (matrix-equals [a ^Matrix b]
-    (let [row-size (.numRows a)
-          col-size (.numColumns a)]
-      (if (and (= (.numRows b) row-size)
-               (= (.numColumns b) col-size))
-        (loop [i 0]
-          (if (< i row-size)
-            (if (loop [j 0]
-                  (if (< j col-size)
-                    (if (= (.get a i j) (.get b i j))
-                      (recur (inc j))
-                      false)
-                    true))
-              (recur (inc i))
-              false)
-            true))
-        false))))
-
-(defn- === [a b eps]
-  (and (>= a (- b eps)) (<= a (+ b eps))))
-
-(extend-protocol PMatrixEqualityEpsilon
-  Vector
-  (matrix-equals-epsilon [a ^Vector b eps]
-    (let [size (.size a)]
-      (if (= size (.size b))
-        (loop [i 0]
-          (if (< i size)
-            (if (=== (.get a i) (.get b i) eps)
-              (recur (inc i))
-              false)
-            true))
-        false)))
-
-  Matrix
-  (matrix-equals-epsilon [a ^Matrix b eps]
-    (let [row-size (.numRows a)
-          col-size (.numColumns a)]
-      (if (and (= (.numRows b) row-size)
-               (= (.numColumns b) col-size))
-        (loop [i 0]
-          (if (< i row-size)
-            (if (loop [j 0]
-                  (if (< j col-size)
-                    (if (=== (.get a i j) (.get b i j) eps)
-                      (recur (inc j))
-                      false)
-                    true))
-              (recur (inc i))
-              false)
-            true))
-        false))))
-
 (extend-protocol PAddScaled
-  Vector
-  (add-scaled [m a factor] (add-scaled! (.copy m) a factor))
-  
-  Matrix
-  (add-scaled [m a factor] (add-scaled! (.copy m) a factor)))
+  Vec
+  (add-scaled [a x factor] (add-scaled! (.copy a) x factor))
+
+  Mat
+  (add-scaled [a x factor] (add-scaled! (.copy a) x factor)))
 
 (extend-protocol PAddScaledMutable
-  Vector
-  (add-scaled! [m ^Vector a ^double factor] (.add m factor a))
-  
-  Matrix
-  (add-scaled! [m ^Matrix a ^double factor] (.add m factor a)))
+  Vec
+  (add-scaled! [a x ^double factor]
+    (cond
+      (instance? Vec x) (.add a factor ^Vec x)
+      :else (matrix-add! a (scale x factor))))
+
+  Mat
+  (add-scaled! [a x ^double factor]
+    (cond
+      (instance? Mat x) (.add a factor ^Mat x)
+      :else (matrix-add! a (scale x factor)))))
 
 (extend-protocol PMatrixDivide
-  Vector
+  Vec
   (element-divide
-    ([m] (element-divide! (.copy m)))
-    ([m a] (element-divide! (.copy m) a)))
+    ([a] (element-divide! (.copy a)))
+    ([a x] (element-divide! (.copy a) x)))
 
-  Matrix
+  Mat
   (element-divide
-    ([m] (element-divide! (.copy m)))
-    ([m a] (element-divide! (.copy m) a))))
+    ([a] (element-divide! (.copy a)))
+    ([a x] (element-divide! (.copy a) x))))
 
 (extend-protocol PMatrixDivideMutable
-  Vector
+  Vec
   (element-divide!
-    ([m]
-     (dotimes [i (.size m)]
-       (.set m i (/ 1.0 (.get m i))))
-     m)
-    ([m a]
+    ([a]
+     (dotimes [i (.size a)]
+       (.set a i (/ 1.0 (.get a i))))
+     a)
+    ([a x]
      (cond
-       (number? a) (element-multiply! m (/ 1.0 (double a)))
-       (same-shape? m a) (do
-                           (dotimes [i (.size m)]
-                             (.set m i (/ (.get m i) (.get ^Vector a i))))
-                           m)
+       (zero-dim? x) (element-multiply! a (/ 1.0 (double (get-0d x))))
+       (same-shape? a x) (do
+                           (dotimes [i (.size a)]
+                             (.set a i (/ (.get a i) (get-1d x i))))
+                           a)
        :else (error "Incompatible shape."))))
 
-  Matrix
+  Mat
   (element-divide!
-    ([m]
-     (dotimes [i (.numRows m)]
-       (dotimes [j (.numColumns m)]
-         (.set m i j (/ 1.0 (.get m i j)))))
-     m)
-    ([m a]
+    ([a]
+     (dotimes [i (.numRows a)]
+       (dotimes [j (.numColumns a)]
+         (.set a i j (/ 1.0 (.get a i j)))))
+     a)
+    ([a x]
      (cond
-       (number? a) (element-multiply! m (/ 1.0 (double a)))
-       (and (instance? Vector a) (= (.size ^Vector a) (.numColumns m)))
+       (zero-dim? x) (element-multiply! a (/ 1.0 (double (get-0d x))))
+       (and (is-vector? x) (= (dimension-count x 0) (.numColumns a)))
          (do
-           (dotimes [i (.numRows m)]
-             (dotimes [j (.numColumns m)]
-               (.set m i j (/ (.get m i j) (.get ^Vector a j)))))
-           m)
-       (same-shape? m a) (do
-                           (dotimes [i (.numRows m)]
-                             (dotimes [j (.numColumns m)]
-                               (.set m i j (/ (.get m i j) (.get ^Matrix a i j)))))
-                           m)
+           (dotimes [i (.numRows a)]
+             (dotimes [j (.numColumns a)]
+               (.set a i j (/ (.get a i j) (get-1d x j)))))
+           a)
+       (same-shape? a x) (do
+                           (dotimes [i (.numRows a)]
+                             (dotimes [j (.numColumns a)]
+                               (.set a i j (/ (.get a i j) (get-2d x i j)))))
+                           a)
        :else (error "Incompatible shape.")))))
 
 (extend-protocol PMatrixScaling
-  Vector
-  (scale [m a] (scale! (.copy m) a))
-  (pre-scale [m a] (scale! (.copy m) a))
+  Vec
+  (scale [a x] (scale! (.copy a) x))
+  (pre-scale [a x] (scale! (.copy a) x))
 
-  Matrix
-  (scale [m a] (scale! (.copy m) a))
-  (pre-scale [m a] (scale! (.copy m) a)))
+  Mat
+  (scale [a x] (scale! (.copy a) x))
+  (pre-scale [a x] (scale! (.copy a) x)))
 
 (extend-protocol PMatrixMutableScaling
-  Vector
-  (scale! [m a] (.scale m a))
-  (pre-scale! [m a] (scale! m a))
+  Vec
+  (scale! [a x] (.scale a x))
+  (pre-scale! [a x] (scale! a x))
 
-  Matrix
-  (scale! [m a] (.scale m a))
-  (pre-scale! [m a] (scale! m a)))
+  Mat
+  (scale! [a x] (.scale a x))
+  (pre-scale! [a x] (scale! a x)))
 
 (extend-protocol PMatrixAdd
-  Vector
-  (matrix-add [m a] (matrix-add! (.copy m) a))
-  (matrix-sub [m a] (matrix-sub! (.copy m) a))
-  
-  Matrix
-  (matrix-add [m a] (matrix-add! (.copy m) a))
-  (matrix-sub [m a] (matrix-add! (.copy m) a)))
+  Vec
+  (matrix-add [a x] (matrix-add! (.copy a) x))
+  (matrix-sub [a x] (matrix-sub! (.copy a) x))
+
+  Mat
+  (matrix-add [a x] (matrix-add! (.copy a) x))
+  (matrix-sub [a x] (matrix-add! (.copy a) x)))
 
 (extend-protocol PMatrixAddMutable
-  Vector
-  (matrix-add! [m a]
+  Vec
+  (matrix-add! [a x]
     (cond
-      (number? a)
-        (let [a (double a)]
-          (dotimes [i (.size m)]
-            (.set m i (+ (.get m i) a)))
-          m)
-      (instance? Vector a) (.add m ^Vector a)
+      (zero-dim? x) (do
+                      (dotimes [i (.size a)]
+                        (.add a i (double (get-0d x))))
+                      a)
+      (instance? Vec x) (.add a ^Vec x)
+      (is-vector? x)
+        (do
+          (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
+          (dotimes [i (.size a)]
+            (.add a i (double (get-1d x i))))
+          a)
       :else (error "Incompatible shape.")))
-  (matrix-sub! [m a]
+  (matrix-sub! [a x]
     (cond
-      (number? a) (matrix-add! m (- a))
-      (instance? Vector a) (.add m -1.0 ^Vector a)
+      (zero-dim? x) (matrix-add! a (- (get-0d x)))
+      (instance? Vec x) (.add a -1.0 ^Vec x)
+      (is-vector? x)
+        (do
+          (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
+          (dotimes [i (.size a)]
+            (.add a i (double (- (get-1d x i)))))
+          a)
       :else (error "Incompatible shape.")))
-  
-  Matrix
-  (matrix-add! [m a]
+
+  Mat
+  (matrix-add! [a x]
     (cond
-      (number? a)
-        (let [a (double a)]
-          (dotimes [i (.numRows m)]
-            (dotimes [j (.numColumns m)]
-              (.set m i j (+ (.get m i j) a))))
-          m)
-      (instance? Vector a)
-        (let [a ^Vector a]
-          (dotimes [i (.numRows m)]
-            (dotimes [j (.numColumns m)]
-              (.set m i j (+ (.get m i j) (.get a j)))))
-          m)
-      (instance? Matrix a) (.add m ^Matrix a)
+      (zero-dim? x) (let [x (get-0d x)]
+                    (dotimes [i (.numRows a)]
+                      (dotimes [j (.numColumns a)]
+                        (.add a i j x)))
+                    a)
+      (is-vector? x) (do
+                       (dotimes [i (.numRows a)]
+                         (dotimes [j (.numColumns a)]
+                           (.add a i j (get-1d x j))))
+                       a)
+      (instance? Mat x) (.add a ^Mat x)
+      (same-shape? a x) (do
+                          (dotimes [i (.numRows a)]
+                            (dotimes [j (.numColumns a)]
+                              (.add a i j (get-2d x i j))))
+                          a)
       :else (error "Incompatible shape.")))
-  (matrix-sub! [m a]
+  (matrix-sub! [a x]
     (cond
-      (number? a) (matrix-add! m (- a))
-      (instance? Vector a)
-        (let [a ^Vector a]
-          (dotimes [i (.numRows m)]
-            (dotimes [j (.numColumns m)]
-              (.set m i j (- (.get m i j) (.get a j)))))
-          m)
-      (instance? Matrix a) (.add m -1 ^Matrix a)
+      (zero-dim? x) (matrix-add! a (- (get-0d x)))
+      (is-vector? x) (do
+                       (dotimes [i (.numRows a)]
+                         (dotimes [j (.numColumns a)]
+                           (.add a i j (- (get-1d x j)))))
+                       a)
+      (instance? Mat x) (.add a -1.0 ^Mat x)
+      (same-shape? a x) (do
+                          (dotimes [i (.numRows a)]
+                            (dotimes [j (.numColumns a)]
+                              (.add a i j (- (get-2d x i j)))))
+                          a)
       :else (error "Incompatible shape."))))
 
 (defn- compute-indices [pair size]
@@ -692,267 +733,275 @@
     (let [[start len] pair] (range start (+ start len)))))
 
 (extend-protocol PSubMatrix
-  Matrix
-  (submatrix [m dim-ranges]
-    (if (= (count dim-ranges) 2)
-      (Matrices/getSubMatrix
-        m
-        (int-array (compute-indices (first dim-ranges) (.numRows m)))
-        (int-array (compute-indices (second dim-ranges) (.numColumns m))))
-      (error "Only dimension 0 and 1 are supported."))))
+  Mat
+  (submatrix [a dim-ranges]
+    (Mat. (Matrices/getSubMatrix
+            (.mtj a)
+            (int-array (compute-indices (first dim-ranges) (.numRows a)))
+            (int-array (compute-indices (second dim-ranges) (.numColumns a)))))))
 
 (extend-protocol PTranspose
-  Vector
-  (transpose [m] m)
+  Vec
+  (transpose [a] a)
 
-  Matrix
-  (transpose [m] (.transpose m (DenseMatrix. (.numColumns m) (.numRows m)))))
+  Mat
+  (transpose [a] (.transpose a (Mat. (DenseMatrix. (.numColumns a) (.numRows a))))))
 
 (extend-protocol PTransposeInPlace
-  Matrix
-  (transpose! [m]
-    (if (.isSquare m)
-      (.transpose m)
+  Mat
+  (transpose! [a]
+    (if (.isSquare a)
+      (.transpose a)
       (error "Matrix has to be squared."))))
 
 (extend-protocol PNumerical
-  Vector
-  (numerical? [m] true)
+  Vec
+  (numerical? [a] true)
 
-  Matrix
-  (numerical? [m] true))
+  Mat
+  (numerical? [a] true))
 
 (extend-protocol PVectorOps
-  Vector
-  (vector-dot [a ^Vector b]
-    (if (= (.size a) (.size b))
-      (.dot a b)
-      (error "Incompatible shape.")))
+  Vec
+  (vector-dot [a b] (inner-product a b))
   (length [a] (.norm a Vector$Norm/Two))
   (length-squared [a] (let [l (.norm a Vector$Norm/Two)] (* l l)))
   (normalise [a] (normalise! (.copy a))))
 
 (extend-protocol PMutableVectorOps
-  Vector
+  Vec
   (normalise! [a]
     (element-divide! a (.norm a Vector$Norm/Two))))
 
 (extend-protocol PMatrixOps
-  Matrix
-  (trace [m]
-    (if (.isSquare m)
-      (loop [i 0, sum 0.0]
-        (if (< i (.numRows m))
-          (recur (inc i) (+ sum (.get m i i)))
-          sum))
+  Mat
+  (trace [a]
+    (if (.isSquare a)
+      (let [size (.numRows a)]
+        (loop [i 0, sum 0.0]
+          (if (< i size)
+            (recur (inc i) (+ sum (.get a i i)))
+            sum)))
       (error "Square matrix required.")))
-  (determinant [m]
-    (->> m
-         (coerce-param (get-canonical-object :ndarray-double))
+  (determinant [a]
+    (->> a
+         (coerce-param (impl/get-canonical-object :ndarray-double))
          (determinant)))
-  (inverse [m]
-    (let [iden (Matrices/identity (.numColumns m))
+  (inverse [a]
+    (let [^Mat iden (identity-matrix mtj-impl (.numColumns a))
           res (.copy iden)]
-      (.solve m iden res))))
+      (.solve a iden res))))
 
 (extend-protocol PRowSetting
-  Matrix
-  (set-row [m i row] (set-row! (.copy m) i row))
-  (set-row! [m i row]
-    (if (is-vector? row)
-      (if (= (dimension-count row 0) (.numColumns m))
-        (do
-          (dotimes [j (.numColumns m)]
-            (.set m i j (get-1d row j)))
-          m)
-        (error "row has a incompatible shape."))
-      (error "row must be a 1D vector."))))
+  Mat
+  (set-row [a i row] (set-row! (.copy a) i row))
+  (set-row! [a i row]
+    (cond
+      (zero-dim? row) (do
+                        (dotimes [j (.numColumns a)]
+                          (.set a j i (double (get-0d row))))
+                        a)
+      (is-vector? row) (do
+                         (dotimes [j (.numColumns a)]
+                           (.set a i j (get-1d row j)))
+                         a)
+      :else (error "row has a incompatible shape."))))
 
 (extend-protocol PColumnSetting
-  Matrix
-  (set-column [m i column] (set-column! (.copy m) i column))
-  (set-column! [m i column]
-    (if (is-vector? column)
-      (if (= (dimension-count column 0) (.numRows m))
-        (do
-          (dotimes [j (.numRows m)]
-            (.set m j i (get-1d column j)))
-          m)
-        (error "column has a incompatible shape."))
-      (error "column must be a 1D vector."))))
+  Mat
+  (set-column [a i column] (set-column! (.copy a) i column))
+  (set-column! [a i column]
+    (cond
+      (zero-dim? column) (do
+                           (dotimes [j (.numRows a)]
+                             (.set a j i (double (get-0d column))))
+                           a)
+      (is-vector? column) (do
+                            (dotimes [j (.numRows a)]
+                              (.set a j i (get-1d column j)))
+                            a)
+      :else (error "column has a incompatible shape."))))
 
 (extend-protocol PElementCount
-  Vector
-  (element-count [m] (.size m))
+  Vec
+  (element-count [a] (.size a))
 
-  Matrix
-  (element-count [m] (* (.numRows m) (.numColumns m))))
+  Mat
+  (element-count [a] (* (.numRows a) (.numColumns a))))
 
 (extend-protocol PFunctionalOperations
-  Vector
-  (element-seq [m] (map #(.get m %) (range (.size m))))
+  Vec
+  (element-seq [a] (map #(.get a %) (range (.size a))))
   (element-map
-    ([m f] (element-map! (.copy m) f))
-    ([m f a] (element-map! (.copy m) f a))
-    ([m f a more] (element-map! (.copy m) f a more)))
+    ([a f] (element-map! (.copy a) f))
+    ([a f x] (element-map! (.copy a) f x))
+    ([a f x more] (element-map! (.copy a) f x more)))
   (element-map!
-    ([m f]
-     (dotimes [i (.size m)]
-       (.set m i (double (f (.get m i)))))
-     m)
-    ([m f ^Vector a]
-     (dotimes [i (.size m)]
-       (.set m i (double (f (.get m i) (.get a i)))))
-     m)
-    ([m f a more]
-     (let [ms (cons m (cons a more))]
-       (dotimes [i (.size m)]
-         (.set m i (double (apply f (mapv #(.get ^Vector % i) ms)))))
-       m)))
+    ([a f]
+     (dotimes [i (.size a)]
+       (.set a i (double (f (.get a i)))))
+     a)
+    ([a f x]
+     (dotimes [i (.size a)]
+       (.set a i (double (f (.get a i) (get-1d x i)))))
+     a)
+    ([a f x more]
+     (let [ms (cons a (cons x more))]
+       (dotimes [i (.size a)]
+         (.set a i (double (apply f (mapv #(get-1d % i) ms)))))
+       a)))
   (element-reduce
-    ([m f] (reduce f (element-seq m)))
-    ([m f init] (reduce f init (element-seq m))))
+    ([a f] (reduce f (element-seq a)))
+    ([a f init] (reduce f init (element-seq a))))
 
-  Matrix
-  (element-seq [m]
-    (for [i (range (.numRows m))
-          j (range (.numColumns m))]
-      (.get m i j)))
+  Mat
+  (element-seq [a]
+    (for [i (range (.numRows a))
+          j (range (.numColumns a))]
+      (.get a i j)))
   (element-map
-    ([m f] (element-map! (.copy m) f))
-    ([m f a] (element-map! (.copy m) f a))
-    ([m f a more] (element-map! (.copy m) f a more)))
+    ([a f] (element-map! (.copy a) f))
+    ([a f x] (element-map! (.copy a) f x))
+    ([a f x more] (element-map! (.copy a) f x more)))
   (element-map!
-    ([m f]
-     (dotimes [i (.numRows m)]
-       (dotimes [j (.numColumns m)]
-         (.set m i j (double (f (.get m i j))))))
-     m)
-    ([m f ^Matrix a]
-     (dotimes [i (.numRows m)]
-       (dotimes [j (.numColumns m)]
-         (.set m i j (double (f (.get m i j) (.get a i j))))))
-     m)
-    ([m f a more]
-     (let [ms (cons m (cons a more))]
-     (dotimes [i (.numRows m)]
-       (dotimes [j (.numColumns m)]
-         (.set m i j (double (apply f (mapv #(.get ^Matrix % i j) ms))))))
-       m)))
+    ([a f]
+     (dotimes [i (.numRows a)]
+       (dotimes [j (.numColumns a)]
+         (.set a i j (double (f (.get a i j))))))
+     a)
+    ([a f x]
+     (dotimes [i (.numRows a)]
+       (dotimes [j (.numColumns a)]
+         (.set a i j (double (f (.get a i j) (get-2d x i j))))))
+     a)
+    ([a f x more]
+     (let [ms (cons a (cons x more))]
+     (dotimes [i (.numRows a)]
+       (dotimes [j (.numColumns a)]
+         (.set a i j (double (apply f (mapv #(get-2d % i j) ms))))))
+       a)))
   (element-reduce
-    ([m f] (reduce f (element-seq m)))
-    ([m f init] (reduce f init (element-seq m)))))
+    ([a f] (reduce f (element-seq a)))
+    ([a f init] (reduce f init (element-seq a)))))
 
 (extend-protocol PSelect
-  Vector
-  (select [m [index]]
+  Vec
+  (select [a [index]]
     (cond
-      (number? index) (.get m (int index))
-      (sequential? index) (Matrices/getSubVector m (int-array index))
-      (= index :all) m))
+      (zero-dim? index) (.get a (int (get-0d index)))
+      (array? index) (Vec. (Matrices/getSubVector (.mtj a) (int-array index)))
+      (= index :all) a))
 
-  Matrix
-  (select [m [row col]]
+  Mat
+  (select [a [row col]]
     (let [row-index (cond
-                      (number? row) (int-array [row])
+                      (zero-dim? row) (int-array [(get-0d row)])
                       (sequential? row) (int-array row)
-                      (= row :all) (int-array (range (.numRows m))))
+                      (= row :all) (int-array (range (.numRows a))))
           col-index (cond
-                      (number? col) (int-array [col])
+                      (zero-dim? col) (int-array [(get-0d col)])
                       (sequential? col) (int-array col)
-                      (= col :all) (int-array (range (.numColumns m))))]
-      (Matrices/getSubMatrix m row-index col-index))))
+                      (= col :all) (int-array (range (.numColumns a))))]
+      (Mat. (Matrices/getSubMatrix (.mtj a) row-index col-index)))))
 
 (extend-protocol PSetSelection
-  Vector
-  (set-selection [m args values]
-    (let [res (.copy m)]
+  Vec
+  (set-selection [a args values]
+    (let [res (.copy a)]
       (assign! (select res args) values)
       res))
 
-  Matrix
-  (set-selection [m args values]
-    (let [res (.copy m)]
+  Mat
+  (set-selection [a args values]
+    (let [res (.copy a)]
       (assign! (select res args) values)
       res)))
 
 (extend-protocol PIndicesAccess
-  Vector
-  (get-indices [m indices]
+  Vec
+  (get-indices [a indices]
     (let [size (count indices)
           res (DenseVector. size)]
       (loop [i 0, indices indices]
         (when-let [idx (first indices)]
           (if (sequential? idx)
             (if (= (count idx) 1)
-              (.set res i (.get m (first idx)))
+              (.set res i (.get a (first idx)))
               (error "Incompatible shape of index."))
-            (.set res i (.get m idx)))
+            (.set res i (.get a idx)))
           (recur (inc i) (rest indices))))
-      res))
+      (Vec. res)))
 
-  Matrix
-  (get-indices [m indices]
+  Mat
+  (get-indices [a indices]
     (let [size (count indices)
           res (DenseVector. size)]
       (loop [i 0, indices indices]
         (when-let [[row col] (first indices)]
-          (.set res i (.get m row col))
+          (.set res i (.get a row col))
           (recur (inc i) (rest indices))))
-      res)))
+      (Vec. res))))
 
 (extend-protocol PIndicesSetting
-  Vector
-  (set-indices [m indices values] (set-indices! (.copy m) indices values))
-  (set-indices! [m indices values]
+  Vec
+  (set-indices [a indices values] (set-indices! (.copy a) indices values))
+  (set-indices! [a indices values]
     (loop [indices indices, values values]
       (when-let [idx (first indices)]
         (if (sequential? idx)
           (if (= (count idx) 1)
-            (.set m (int (first idx)) (double (first values)))
+            (.set a (int (first idx)) (double (first values)))
             (error "Incompatible shape of index."))
-          (.set m (int idx) (double (first values))))
+          (.set a (int idx) (double (first values))))
         (recur (rest indices) (rest values))))
-    m)
+    a)
 
-  Matrix
-  (set-indices [m indices values] (set-indices! (.copy m) indices values))
-  (set-indices! [m indices values]
+  Mat
+  (set-indices [a indices values] (set-indices! (.copy a) indices values))
+  (set-indices! [a indices values]
     (loop [indices indices, values values]
       (when-let [[row col] (first indices)]
-        (.set m row col (first values))
+        (.set a row col (first values))
         (recur (rest indices) (rest values))))
-    m))
+    a))
 
 (extend-protocol PNorm
-  Vector
-  (norm [m p]
+  Vec
+  (norm [a p]
     (condp = p
-      1 (.norm m Vector$Norm/One)
-      2 (.norm m Vector$Norm/Two)
-      Double/POSITIVE_INFINITY (.norm m Vector$Norm/Infinity)
+      1 (.norm a Vector$Norm/One)
+      2 (.norm a Vector$Norm/Two)
+      Double/POSITIVE_INFINITY (.norm a Vector$Norm/Infinity)
       (error "p-norm not supported.")))
 
-  Matrix
-  (norm [m p]
+  Mat
+  (norm [a p]
     (condp = p
-      1 (.norm m Matrix$Norm/One)
-      2 (.norm m Matrix$Norm/Frobenius)
-      Double/POSITIVE_INFINITY (.norm m Matrix$Norm/Infinity)
-      Long/MAX_VALUE (.norm m Matrix$Norm/Maxvalue)
+      1 (.norm a Matrix$Norm/One)
+      2 (.norm a Matrix$Norm/Frobenius)
+      Double/POSITIVE_INFINITY (.norm a Matrix$Norm/Infinity)
+      Long/MAX_VALUE (.norm a Matrix$Norm/Maxvalue)
       (error "p-norm not supported."))))
 
 (extend-protocol PSolveLinear
-  Matrix
+  Mat
   (solve [a b]
     (cond
-      (instance? Vector b) (let [^Vector b b
-                                 res (.copy b)]
-                             (.solve a b res))
-      (instance? Matrix b) (let [^Matrix b b
-                                 res (.copy b)]
-                             (.solve a b res)
-                             res)
-      :else (error "Only MTJ vectors and matrices are supported."))))
+      (is-vector? b) (let [^Vec b (coerce-param mtj-impl b)
+                           res (.copy b)]
+                       (.solve a b res)
+                       res)
+      (array? b) (let [^Mat b (coerce-param mtj-impl b)
+                       res (.copy b)]
+                   (.solve a b res)
+                   res)
+      :else (error "Can only solve for vectors and matrices."))))
 
-(register-implementation imp)
+(impl/register-implementation (Mat. (DenseMatrix. 1 1)))
+
+(comment
+  
+(require '[clojure.core.matrix :as m])
+(require '[clojure.core.matrix.linear :as l])
+
+  )
