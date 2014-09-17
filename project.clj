@@ -1,4 +1,4 @@
-(defproject cav/mtj "0.1.0"
+(defproject cav/mtj "0.2.0"
   :description "A MTJ clojure wrapper."
   :url "https://github.com/sethyuan/mtj"
   :license {:name "MIT"}

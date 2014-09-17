@@ -28,7 +28,7 @@ Extra features API that core.matrix does not have will go here.
 
 ## Implemented core.matrix protocols
 
-Most protocols are implemented. Only a few infrequent ones are left unimplemented.
+Most protocols are implemented (for reasons of efficiency). Only a few infrequent ones are left unimplemented.
 
 *Norm* and *solve* are implemented, other linear algebra protocols are not implemented yet, but possible.
 
