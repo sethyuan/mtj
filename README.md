@@ -30,7 +30,7 @@ Extra features API that core.matrix does not have will go here.
 
 Most protocols are implemented (for reasons of efficiency). Only a few infrequent ones are left unimplemented.
 
-*Norm* and *solve* are implemented, other linear algebra protocols are not implemented yet, but possible.
+All wiki documented linear algebra protocols are implemented, including Norm, QR, Cholesky, LU, SVD, Eigen and a linear solver.
 
 ## License
 

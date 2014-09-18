@@ -8,7 +8,8 @@
             DenseVector DenseMatrix Matrices
             Vector$Norm Matrix$Norm
             LowerSymmBandMatrix
-            PermutationMatrix]
+            PermutationMatrix
+            SVD QR DenseLU DenseCholesky EVD SymmDenseEVD]
            [cav.mtj Mat Vec RowVectorView ColumnVectorView]))
 
 (definline ^:private array? [a] `(not (is-scalar? ~a)))
@@ -1037,6 +1038,69 @@
                    res)
       :else (error "Can only solve for vectors and matrices."))))
 
+(extend-protocol PQRDecomposition
+  Mat
+  (qr [a {:keys [return]}]
+    (let [res (QR/factorize (.mtj a))]
+      (into {} (mapv (fn [k]
+                       [k (case k
+                            :Q (Mat. (.getQ res))
+                            :R (Mat. (.getR res)))])
+                     return)))))
+
+(extend-protocol PCholeskyDecomposition
+  Mat
+  (cholesky [a {:keys [return]}]
+    (let [res (DenseCholesky/factorize (.mtj a))]
+      (into {} (mapv (fn [k]
+                       [k (case k
+                            :L (Mat. (.getU res))
+                            :L* (transpose (Mat. (.getU res))))])
+                     return)))))
+
+(extend-protocol PLUDecomposition
+  Mat
+  (lu [a {:keys [return]}]
+    (let [res (DenseLU/factorize (.mtj a))]
+      (into {} (mapv (fn [k]
+                       [k (case k
+                            :L (Mat. (.getL res))
+                            :U (Mat. (.getU res))
+                            :P (Mat. (.getP res)))])
+                     return)))))
+
+(extend-protocol PSVDDecomposition
+  Mat
+  (svd [a {:keys [return]}]
+    (let [res (if (some #{:U :V*} return)
+                (SVD/factorize (.mtj a))
+                (-> (SVD. (.numRows a) (.numColumns a) false)
+                    (.factor (.copy (.mtj a)))))]
+      (into {} (mapv (fn [k]
+                       [k (case k
+                            :U (Mat. (.getU res))
+                            :V* (Mat. (.getVt res))
+                            :S (.getS res))])
+                     return)))))
+
+(extend-protocol PEigenDecomposition
+  Mat
+  (eigen [a {:keys [return symmetric]
+             :or {return [:Q :A], symmetric false}}]
+    (let [res (if symmetric
+                (SymmDenseEVD/factorize (.mtj a))
+                (EVD/factorize (.mtj a)))]
+      (into {} (mapv (fn [k]
+                       [k (case k
+                            :Q (Mat. (if symmetric
+                                       (.getEigenvectors ^SymmDenseEVD res)
+                                       (.getRightEigenvectors ^EVD res)))
+                            :A (diagonal-matrix mtj-impl
+                                                (if symmetric
+                                                  (.getEigenvalues ^SymmDenseEVD res)
+                                                  (.getRealEigenvalues ^EVD res))))])
+                     return)))))
+
 (impl/register-implementation (Mat. (DenseMatrix. 1 1)))
 
 (comment
@@ -1054,7 +1118,7 @@
 (def clatrix (m/matrix :clatrix numbers))
 (def mtj (m/matrix :mtj numbers))
 
-(quick-bench (m/mmul clatrix clatrix))
-(quick-bench (m/mmul mtj mtj))
+(quick-bench (l/svd clatrix))
+(quick-bench (l/svd mtj))
 
   )
