@@ -687,11 +687,11 @@
   Vec
   (matrix-add! [a x]
     (cond
+      (instance? Vec x) (.add a ^Vec x)
       (zero-dim? x) (let [x (double (get-0d x))]
                       (dotimes [i (.size a)]
                         (.add a i x))
                       a)
-      (instance? Vec x) (.add a ^Vec x)
       (is-vector? x)
         (let [size (.size a)]
           (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
@@ -703,8 +703,8 @@
       :else (error "Incompatible shape.")))
   (matrix-sub! [a x]
     (cond
-      (zero-dim? x) (matrix-add! a (- (get-0d x)))
       (instance? Vec x) (.add a -1.0 ^Vec x)
+      (zero-dim? x) (matrix-add! a (- (get-0d x)))
       (is-vector? x)
         (let [size (.size a)]
           (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
@@ -718,6 +718,7 @@
   Mat
   (matrix-add! [a x]
     (cond
+      (instance? Mat x) (.add a ^Mat x)
       (zero-dim? x) (let [x (get-0d x)]
                       (dotimes [i (.numRows a)]
                         (dotimes [j (.numColumns a)]
@@ -730,7 +731,6 @@
                              (.add a i j (first vs))
                              (recur (inc j) (rest vs)))))
                        a)
-      (instance? Mat x) (.add a ^Mat x)
       (same-shape? a x) (do
                           (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
                           (dotimes [i (.numRows a)]
@@ -740,6 +740,7 @@
       :else (error "Incompatible shape.")))
   (matrix-sub! [a x]
     (cond
+      (instance? Mat x) (.add a -1.0 ^Mat x)
       (zero-dim? x) (matrix-add! a (- (get-0d x)))
       (is-vector? x) (let [col-size (.numColumns a)]
                        (dotimes [i (.numRows a)]
@@ -748,7 +749,6 @@
                              (.add a i j (- (first vs)))
                              (recur (inc j) (rest vs)))))
                        a)
-      (instance? Mat x) (.add a -1.0 ^Mat x)
       (same-shape? a x) (do
                           (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
                           (dotimes [i (.numRows a)]
@@ -1043,5 +1043,18 @@
   
 (require '[clojure.core.matrix :as m])
 (require '[clojure.core.matrix.linear :as l])
+(require '[criterium.core :refer [quick-bench]])
+
+(def w 1000)
+(def h 1000)
+(def numbers (for [_ (range w)]
+               (for [_ (range h)]
+                 (rand))))
+
+(def clatrix (m/matrix :clatrix numbers))
+(def mtj (m/matrix :mtj numbers))
+
+(quick-bench (m/mmul clatrix clatrix))
+(quick-bench (m/mmul mtj mtj))
 
   )
