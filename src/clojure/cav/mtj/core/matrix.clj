@@ -31,43 +31,42 @@
       nil))
   (construct-matrix [a data]
     (cond
-      (zero-dim? data) (get-0d data)
+      (zero-dim? data) (double (get-0d data))
       (instance? Vec data) data
       (instance? Mat data) data   
       (instance? (Class/forName "[D") data) (Vec. (DenseVector. ^doubles data))
       (instance? (Class/forName "[[D") data) (Mat. (DenseMatrix. ^"[[D" data))
-      (is-vector? data) (let [^int size (dimension-count data 0)
-                              res (DenseVector. size)]
-                          (dotimes [i size]
-                            (.set res i (double (get-1d data i))))
-                          (Vec. res))
-      (array? data) (if (= (dimensionality data) 2)
-                      (let [^int row-size (dimension-count data 0)
-                            ^int col-size (dimension-count data 1)
-                            res (DenseMatrix. row-size col-size)]
-                        (dotimes [i row-size]
-                          (dotimes [j col-size]
-                            (.set res i j (get-2d data i j))))
-                        (Mat. res))
-                      (error "Incompatible shape."))))
+      (and (sequential? data) (number? (first data))) (Vec. (DenseVector. (double-array data)))
+      (sequential? data) (Mat. (DenseMatrix. ^"[[D" (into-array (map #(double-array %) data))))
+
+      ;; Following implementation is more general, but known to be slow for
+      ;; some matrix implementations like seqs, because of get-1d/get-2d usage.
+
+      ;; (is-vector? data) (let [^int size (dimension-count data 0)
+      ;;                         res (DenseVector. size)]
+      ;;                     (dotimes [i size]
+      ;;                       (.set res i (double (get-1d data i))))
+      ;;                     (Vec. res))
+      ;; (array? data) (if (= (dimensionality data) 2)
+      ;;                 (let [^int row-size (dimension-count data 0)
+      ;;                       ^int col-size (dimension-count data 1)
+      ;;                       res (DenseMatrix. row-size col-size)]
+      ;;                   (dotimes [i row-size]
+      ;;                     (dotimes [j col-size]
+      ;;                       (.set res i j (get-2d data i j))))
+      ;;                   (Mat. res))
+      ;;                 (error "Incompatible shape."))
+      ))
 
   PRowColMatrix
   (column-matrix [a data]
     (cond
       (instance? Vec data) (Mat. (DenseMatrix. (.mtj ^Vec data)))
-      (is-vector? data) (let [^int size (dimension-count data 0)
-                              res (DenseMatrix. size 1)]
-                          (dotimes [i size]
-                            (.set res i 0 (get-1d data i)))
-                          (Mat. res))
+      (is-vector? data) (Mat. (DenseMatrix. ^"[[D" (into-array (map #(double-array [%]) data))))
       :else (error "data has to be a 1D vector.")))
   (row-matrix [a data]
     (if (is-vector? data)
-      (let [^int size (dimension-count data 0)
-            res (DenseMatrix. 1 size)]
-        (dotimes [i size]
-          (.set res 0 i (get-1d data i)))
-        (Mat. res))
+      (Mat. (DenseMatrix. ^"[[D" (into-array [(double-array data)])))
       (error "data has to be a 1D vector.")))
 
   PComputeMatrix
@@ -109,10 +108,12 @@
   (identity-matrix [a dims] (Mat. (Matrices/identity (int dims))))
   (diagonal-matrix [a diagonal-values]
     (let [^int size (dimension-count diagonal-values 0)
-          mat (LowerSymmBandMatrix. size 0)]
-      (dotimes [i size]
-        (.set mat i i (get-1d diagonal-values i)))
-      (Mat. mat)))
+          res (LowerSymmBandMatrix. size 0)]
+      (loop [i 0, vs diagonal-values]
+        (when (< i size)
+          (.set res i i (first vs))
+          (recur (inc i) (rest vs))))
+      (Mat. res)))
 
   PPermutationMatrix
   (permutation-matrix [a permutation]
@@ -287,26 +288,30 @@
   Vec
   (join [a x]
     (let [m-size (.size a)
-          ^int a-size (dimension-count x 0)
-          res (DenseVector. (+ m-size a-size))]
+          ^int size (+ m-size (dimension-count x 0))
+          res (DenseVector. size)]
       (dotimes [i m-size] (.set res i (.get a i)))
-      (dotimes [i a-size] (.set res (+ i m-size) (double (get-1d x i))))
+      (loop [i m-size, vs x]
+        (when (< i size)
+          (.set res i (double (first vs)))
+          (recur (inc i) (rest vs))))
       (Vec. res)))
 
   Mat
   (join [a x]
     (let [m-col-size (.numColumns a)
-          ^int a-col-size (dimension-count x 1)]
-      (if (= m-col-size a-col-size)
+          ^int x-col-size (dimension-count x 1)]
+      (if (= m-col-size x-col-size)
         (let [m-row-size (.numRows a)
-              ^int a-row-size (dimension-count x 0)
-              res (DenseMatrix. (+ m-row-size a-row-size) m-col-size)]
+              ^int x-row-size (dimension-count x 0)
+              row-size (+ m-row-size x-row-size)
+              res (DenseMatrix. row-size m-col-size)]
           (dotimes [i m-row-size]
             (dotimes [j m-col-size]
               (.set res i j (.get a i j))))
-          (dotimes [i a-row-size]
-            (dotimes [j a-col-size]
-              (.set res (+ i m-row-size) j (double (get-2d x i j)))))
+          (dotimes [i x-row-size]
+            (dotimes [j m-col-size]
+              (.set res (+ m-row-size i) j (get-2d x i j))))
           (Mat. res))
         (error "Column size not compatible.")))))
 
@@ -365,9 +370,11 @@
   (assign! [a source]
     (cond
       (zero-dim? source) (fill! a (get-0d source))
-      (same-shape? a source) (do
-                               (dotimes [i (.size a)]
-                                 (.set a i (double (get-1d source i))))
+      (same-shape? a source) (let [size (.size a)]
+                               (loop [i 0, vs source]
+                                 (when (< i size)
+                                   (.set a i (double (first vs)))
+                                   (recur (inc i) (rest vs))))
                                a) 
       :else (error "Incompatible shape.")))
   (assign-array! [a arr] (assign! a arr))
@@ -389,10 +396,15 @@
                                a)
       :else (error "source has to have dimensionality 0 or 1 for a 2D matrix.")))
   (assign-array! [a arr]
-    (let [col-size (.numColumns a)]
-      (dotimes [i (.numRows a)]
-        (dotimes [j col-size]
-          (.set a i j (get-1d arr (+ (* i col-size) j)))))
+    (let [row-size (.numRows a)
+          col-size (.numColumns a)]
+      (loop [i 0, j 0, vs arr]
+        (when (< i row-size)
+          (if (< j col-size)
+            (do
+              (.set a i j (first vs))
+              (recur i (inc j) (rest vs)))
+            (recur (inc i) 0 vs))))
       a)))
 
 (extend-protocol PImmutableAssignment
@@ -496,8 +508,10 @@
         (let [size (.size a)]
           (if (= (dimension-count x 0) size)
             (do
-              (dotimes [i size]
-                (.set a i (* (.get a i) (get-1d x i))))
+              (loop [i 0, vs x]
+                (when (< i size)
+                  (.set a i (* (.get a i) (first vs)))
+                  (recur (inc i) (rest vs))))
               a)
             (error "shape of x is not compatible.")))
       :else (error "shape of x is not compatible.")))
@@ -534,8 +548,10 @@
           (if (= (dimension-count x 0) col-size)
             (do
               (dotimes [i row-size]
-                (dotimes [j col-size]
-                  (.set a i j (* (.get a i j) (get-1d x j)))))
+                (loop [j 0, vs x]
+                  (when (< j col-size)
+                    (.set a i j (* (.get a i j) (first x)))
+                    (recur (inc j) (rest vs)))))
               a)
             (error "shape of x is not compatible.")))
       (array? x)
@@ -607,9 +623,11 @@
     ([a x]
      (cond
        (zero-dim? x) (element-multiply! a (/ 1.0 (double (get-0d x))))
-       (same-shape? a x) (do
-                           (dotimes [i (.size a)]
-                             (.set a i (/ (.get a i) (get-1d x i))))
+       (same-shape? a x) (let [size (.size a)]
+                           (loop [i 0, vs x]
+                             (when (< i size)
+                               (.set a i (/ (.get a i) (first vs)))
+                               (recur (inc i) (rest vs))))
                            a)
        :else (error "Incompatible shape."))))
 
@@ -624,10 +642,12 @@
      (cond
        (zero-dim? x) (element-multiply! a (/ 1.0 (double (get-0d x))))
        (and (is-vector? x) (= (dimension-count x 0) (.numColumns a)))
-         (do
+         (let [col-size (.numColumns a)]
            (dotimes [i (.numRows a)]
-             (dotimes [j (.numColumns a)]
-               (.set a i j (/ (.get a i j) (get-1d x j)))))
+             (loop [j 0, vs x]
+               (when (< j col-size)
+                 (.set a i j (/ (.get a i j) (first vs)))
+                 (recur (inc j) (rest vs)))))
            a)
        (same-shape? a x) (do
                            (dotimes [i (.numRows a)]
@@ -667,16 +687,18 @@
   Vec
   (matrix-add! [a x]
     (cond
-      (zero-dim? x) (do
+      (zero-dim? x) (let [x (double (get-0d x))]
                       (dotimes [i (.size a)]
-                        (.add a i (double (get-0d x))))
+                        (.add a i x))
                       a)
       (instance? Vec x) (.add a ^Vec x)
       (is-vector? x)
-        (do
+        (let [size (.size a)]
           (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
-          (dotimes [i (.size a)]
-            (.add a i (double (get-1d x i))))
+          (loop [i 0, vs x]
+            (when (< i size)
+              (.add a i (double (first vs)))
+              (recur (inc i) (rest vs))))
           a)
       :else (error "Incompatible shape.")))
   (matrix-sub! [a x]
@@ -684,10 +706,12 @@
       (zero-dim? x) (matrix-add! a (- (get-0d x)))
       (instance? Vec x) (.add a -1.0 ^Vec x)
       (is-vector? x)
-        (do
+        (let [size (.size a)]
           (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
-          (dotimes [i (.size a)]
-            (.add a i (double (- (get-1d x i)))))
+          (loop [i 0, vs x]
+            (when (< i size)
+              (.add a i (double (- (first vs))))
+              (recur (inc i) (rest vs))))
           a)
       :else (error "Incompatible shape.")))
 
@@ -695,17 +719,20 @@
   (matrix-add! [a x]
     (cond
       (zero-dim? x) (let [x (get-0d x)]
-                    (dotimes [i (.numRows a)]
-                      (dotimes [j (.numColumns a)]
-                        (.add a i j x)))
-                    a)
-      (is-vector? x) (do
+                      (dotimes [i (.numRows a)]
+                        (dotimes [j (.numColumns a)]
+                          (.add a i j x)))
+                      a)
+      (is-vector? x) (let [col-size (.numColumns a)]
                        (dotimes [i (.numRows a)]
-                         (dotimes [j (.numColumns a)]
-                           (.add a i j (get-1d x j))))
+                         (loop [j 0, vs x]
+                           (when (< j col-size)
+                             (.add a i j (first vs))
+                             (recur (inc j) (rest vs)))))
                        a)
       (instance? Mat x) (.add a ^Mat x)
       (same-shape? a x) (do
+                          (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
                           (dotimes [i (.numRows a)]
                             (dotimes [j (.numColumns a)]
                               (.add a i j (get-2d x i j))))
@@ -714,13 +741,16 @@
   (matrix-sub! [a x]
     (cond
       (zero-dim? x) (matrix-add! a (- (get-0d x)))
-      (is-vector? x) (do
+      (is-vector? x) (let [col-size (.numColumns a)]
                        (dotimes [i (.numRows a)]
-                         (dotimes [j (.numColumns a)]
-                           (.add a i j (- (get-1d x j)))))
+                         (loop [j 0, vs x]
+                           (when (< j col-size)
+                             (.add a i j (- (first vs)))
+                             (recur (inc j) (rest vs)))))
                        a)
       (instance? Mat x) (.add a -1.0 ^Mat x)
       (same-shape? a x) (do
+                          (println "WARNING: Operations with mixed matrices/vectors may not yield the fastest result.")
                           (dotimes [i (.numRows a)]
                             (dotimes [j (.numColumns a)]
                               (.add a i j (- (get-2d x i j)))))
@@ -797,13 +827,15 @@
   (set-row [a i row] (set-row! (.copy a) i row))
   (set-row! [a i row]
     (cond
-      (zero-dim? row) (do
+      (zero-dim? row) (let [x (double (get-0d row))]
                         (dotimes [j (.numColumns a)]
-                          (.set a j i (double (get-0d row))))
+                          (.set a j i x))
                         a)
-      (is-vector? row) (do
-                         (dotimes [j (.numColumns a)]
-                           (.set a i j (get-1d row j)))
+      (is-vector? row) (let [col-size (.numColumns a)]
+                         (loop [j 0, vs row]
+                           (when (< j col-size)
+                             (.set a i j (first vs))
+                             (recur (inc j) (rest vs))))
                          a)
       :else (error "row has a incompatible shape."))))
 
@@ -812,13 +844,15 @@
   (set-column [a i column] (set-column! (.copy a) i column))
   (set-column! [a i column]
     (cond
-      (zero-dim? column) (do
+      (zero-dim? column) (let [x (double (get-0d column))]
                            (dotimes [j (.numRows a)]
-                             (.set a j i (double (get-0d column))))
+                             (.set a j i x))
                            a)
-      (is-vector? column) (do
-                            (dotimes [j (.numRows a)]
-                              (.set a j i (get-1d column j)))
+      (is-vector? column) (let [row-size (.numRows a)]
+                            (loop [j 0, vs column]
+                              (when (< j row-size)
+                                (.set a j i (first vs))
+                                (recur (inc j) (rest vs))))
                             a)
       :else (error "column has a incompatible shape."))))
 
@@ -842,13 +876,19 @@
        (.set a i (double (f (.get a i)))))
      a)
     ([a f x]
-     (dotimes [i (.size a)]
-       (.set a i (double (f (.get a i) (get-1d x i)))))
+     (let [size (.size a)]
+       (loop [i 0, vs x]
+         (when (< i size)
+           (.set a i (double (f (.get a i) (first x))))
+           (recur (inc i) (rest vs)))))
      a)
     ([a f x more]
-     (let [ms (cons a (cons x more))]
-       (dotimes [i (.size a)]
-         (.set a i (double (apply f (mapv #(get-1d % i) ms)))))
+     (let [xs (cons a (cons x more))
+           size (.size a)]
+       (loop [i 0, arrs xs]
+         (when (< i size)
+           (.set a i (double (apply f (mapv #(first %) arrs))))
+           (recur (inc i) (mapv rest arrs))))
        a)))
   (element-reduce
     ([a f] (reduce f (element-seq a)))
@@ -875,10 +915,10 @@
          (.set a i j (double (f (.get a i j) (get-2d x i j))))))
      a)
     ([a f x more]
-     (let [ms (cons a (cons x more))]
+     (let [xs (cons a (cons x more))]
      (dotimes [i (.numRows a)]
        (dotimes [j (.numColumns a)]
-         (.set a i j (double (apply f (mapv #(get-2d % i j) ms))))))
+         (.set a i j (double (apply f (mapv #(get-2d % i j) xs))))))
        a)))
   (element-reduce
     ([a f] (reduce f (element-seq a)))
