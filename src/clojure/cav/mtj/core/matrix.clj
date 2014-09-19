@@ -1086,20 +1086,24 @@
 (extend-protocol PEigenDecomposition
   Mat
   (eigen [a {:keys [return symmetric]
-             :or {return [:Q :A], symmetric false}}]
+             :or {return [:Q :rA :iA], symmetric false}}]
     (let [res (if symmetric
                 (SymmDenseEVD/factorize (.mtj a))
                 (EVD/factorize (.mtj a)))]
-      (into {} (mapv (fn [k]
-                       [k (case k
-                            :Q (Mat. (if symmetric
-                                       (.getEigenvectors ^SymmDenseEVD res)
-                                       (.getRightEigenvectors ^EVD res)))
-                            :A (diagonal-matrix mtj-impl
-                                                (if symmetric
-                                                  (.getEigenvalues ^SymmDenseEVD res)
-                                                  (.getRealEigenvalues ^EVD res))))])
-                     return)))))
+      (into {}
+            (mapv (fn [k]
+                    [k (case k
+                         :Q (Mat. (if symmetric
+                                    (.getEigenvectors ^SymmDenseEVD res)
+                                    (.getRightEigenvectors ^EVD res)))
+                         :A (if symmetric
+                               (.getEigenvalues ^SymmDenseEVD res)
+                               (.getRealEigenvalues ^EVD res))
+                         :rA (if symmetric
+                               (.getEigenvalues ^SymmDenseEVD res)
+                               (.getRealEigenvalues ^EVD res))
+                         :iA (if-not symmetric (.getImaginaryEigenvalues ^EVD res)))])
+                  return)))))
 
 (impl/register-implementation (Mat. (DenseMatrix. 1 1)))
 
