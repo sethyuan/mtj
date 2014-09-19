@@ -1,5 +1,8 @@
 (ns cav.mtj.core.matrix
-  "MTJ implementation for core.matrix. Refer to core.matix docs for its APIs."
+  "MTJ implementation for core.matrix. Refer to core.matix docs for its APIs.
+   The implementation key for MTJ is `:mtj`. E.g. you can call core.matrix
+   `(set-current-implementation :mtj)` to enable MTJ as the default
+   implementation."
   (:use [clojure.core.matrix.protocols])
   (:require [clojure.core.matrix]
             [clojure.core.matrix.implementations :as impl]
