@@ -24,7 +24,7 @@ Just use it as a core.matrix implementation, like this:
 
 ## API
 
-Extra features API that core.matrix does not have will go here.
+Extra features API that core.matrix does not have go in `cav.mtj` namespace. You can find the [API docs](http://sethyuan.github.io/mtj) here: http://sethyuan.github.io/mtj
 
 ## Implemented core.matrix protocols
 
