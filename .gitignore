@@ -2,6 +2,7 @@
 *.swp
 /target
 /classes
+/doc
 /checkouts
 pom.xml
 pom.xml.asc

@@ -1,5 +1,5 @@
 (ns cav.mtj.core.matrix
-  "Wrapping MTJ for core.matrix."
+  "MTJ implementation for core.matrix. Refer to core.matix docs for its APIs."
   (:use [clojure.core.matrix.protocols])
   (:require [clojure.core.matrix]
             [clojure.core.matrix.implementations :as impl]
