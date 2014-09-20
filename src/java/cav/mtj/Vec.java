@@ -3,9 +3,11 @@ package cav.mtj;
 import java.lang.Iterable;
 import java.util.Iterator;
 
+import clojure.lang.Sequential;
+
 import no.uib.cipr.matrix.Vector;
 
-public final class Vec implements Iterable<Double> {
+public final class Vec implements Iterable<Double>, Sequential {
   private class VecIterator implements Iterator<Double> {
     private int size;
     private int index = 0;

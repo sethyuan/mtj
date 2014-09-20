@@ -3,13 +3,14 @@ package cav.mtj;
 import java.lang.Iterable;
 import java.util.Iterator;
 
+import clojure.lang.Sequential;
+
 import no.uib.cipr.matrix.Matrix;
 
-public final class Mat implements Iterable<Double> {
-  private class MatIterator implements Iterator<Double> {
+public final class Mat implements Iterable<Vec>, Sequential {
+  private class MatIterator implements Iterator<Vec> {
     private int numRows, numCols;
-    private int row = 0;
-    private int col = 0;
+    private int m = 0;
 
     public MatIterator() {
       numRows = mtj.numRows();
@@ -18,21 +19,12 @@ public final class Mat implements Iterable<Double> {
 
     @Override
     public boolean hasNext() {
-      return row < numRows && col < numCols;
+      return m < numRows;
     }
 
     @Override
-    public Double next() {
-      double val = mtj.get(row, col);
-
-      if (col < numCols - 1) {
-        col++;
-      } else {
-        row++;
-        col = 0;
-      }
-
-      return val;
+    public Vec next() {
+      return new Vec(new RowVectorView(mtj, m++));
     }
 
     @Override
@@ -48,7 +40,7 @@ public final class Mat implements Iterable<Double> {
   }
 
   @Override
-  public Iterator<Double> iterator() {
+  public Iterator<Vec> iterator() {
     return new MatIterator();
   }
 
