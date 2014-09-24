@@ -14,7 +14,6 @@ Just use it as a core.matrix implementation, like this:
 
 ```clojure
 (require '[clojure.core.matrix :as m])
-(require '[cav.mtj.core.matrix])
 
 (m/set-current-implementation :mtj)
 

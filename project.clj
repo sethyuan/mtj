@@ -5,7 +5,7 @@
   :dependencies [[org.clojure/clojure "1.6.0"]
                  [com.googlecode.matrix-toolkits-java/mtj "1.0.1"]
                  [com.github.fommil.netlib/all "1.1.2" :extension "pom"]
-                 [net.mikera/core.matrix "0.29.1"]]
+                 [net.mikera/core.matrix "0.30.0"]]
   :global-vars {*warn-on-reflection* true
                 *unchecked-math* true}
   :source-paths ["src/clojure"]
